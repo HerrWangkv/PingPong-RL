@@ -106,7 +106,7 @@ class VPG():
                 torch.save(self.policy.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}.pt'))
 if __name__ == "__main__":
     file_dir = os.path.join(os.path.dirname(__file__), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}')
-    os.mkdir(file_dir)
+    os.makedirs(file_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     wandb.init(project='Ping Pong')
     num_episodes = 1000
