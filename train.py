@@ -6,6 +6,7 @@ import torch
 from torch import nn
 import wandb
 import datetime
+import os
 
 # hyperparameters
 learning_rate = 1e-4 #for convergence (too low- slow to converge, too high,never converge)
@@ -30,8 +31,8 @@ class Net(nn.Module):
         nn.ReLU(),
         nn.Linear(200, 10),
         nn.ReLU(),
-        nn.Linear(10, 1),
-        nn.Sigmoid()
+        nn.Linear(10, 2),
+        nn.Softmax()
         )
 
     def forward(self, img):
@@ -49,7 +50,8 @@ def prepro(I):
     I = I.reshape(1, 1, 80, 80)
     return torch.FloatTensor(I)
 
-
+dir = os.path.join(os.path.dirname(__file__), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}')
+os.mkdir(dir)
 #wandb.init(project='Ping Pong')
 # network  
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,15 +84,17 @@ while True:
     prev_x = cur_x
 
     # forward the policy network and sample an action from the returned probability
-    UpProb = net(x.to(device))
+    probs = net(x.to(device))
     #this is the stochastic part 
-    action = 2 if np.random.uniform() < UpProb else 3 # 2 UP, 3 Down
+    action = 2 if np.random.uniform() < probs[0] else 3 # 2 UP, 3 Down
 
     # step the environment and get new measurements
     env.render()
     observation, reward, done, info = env.step(action)
     reward_sum += reward # (+1 if moves past AI, -1 if missed ball, 0 otherwise)
-    l += torch.log(UpProb) * reward
+    # penalize if failed
+    if reward == -1:
+        l += torch.log(probs[action-2])
     if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
         print ('ep %d: game finished, reward: %f' % (episode_number, reward) + ('' if reward == -1 else ' !!!!!!!!'))
     if done: # an episode finished, but already many game boundaries
@@ -107,4 +111,4 @@ while True:
         prev_x = None
         l = 0
         if episode_number % 100 == 0:
-            torch.save(net.state_dict(), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}/checkpoint_{episode_number}.pt')
+            torch.save(net.state_dict(), os.path.join(dir, f'checkpoint_{episode_number}.pt'))
