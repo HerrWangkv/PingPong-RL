@@ -93,12 +93,14 @@ while True:
     observation, reward, done, info = env.step(action)
     reward_sum += reward # (+1 if moves past AI, -1 if missed ball, 0 otherwise)
     # penalize if failed
-    if reward == -1:
-        l += torch.log(probs[action-2])
+    l += torch.log(probs[action-2])
     if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
         print ('ep %d: game finished, reward: %f' % (episode_number, reward) + ('' if reward == -1 else ' !!!!!!!!'))
+        if reward == 1:
+            l = -l
     if done: # an episode finished, but already many game boundaries
         episode_number += 1
+        wandb.log({'reward_sum': reward_sum, 'loss': l})
         optimizer.zero_grad()
         l.backward()
         optimizer.step() # update the parameters
