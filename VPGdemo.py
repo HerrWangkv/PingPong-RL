@@ -67,10 +67,11 @@ class VPG():
         discounted_rewards = torch.zeros(len(self.rewards)).to(self.device)
         running_add = 0
         for t in reversed(range(len(self.rewards))):
-            if (self.rewards[t] != 0):
-                running_add = 0
+            #if (self.rewards[t] != 0):
+            #    running_add = 0
             running_add = running_add * self.gamma + self.rewards[t]
             discounted_rewards[t] = running_add
+        print(discounted_rewards)
         return discounted_rewards
 
     def learn(self):
@@ -83,18 +84,21 @@ class VPG():
         loss.backward()
         self.optimizer.step()
         wandb.log({'loss': loss})
-        self.responsible_probs, rewards = [], []
+        self.responsible_probs, self.rewards = [], []
     
     def train(self, num_episodes):
+        prev_state = None
         for i in range(num_episodes):
-            state = self.env.reset()
+            cur_state = self.env.reset()
             reward_sum = 0
             done = False
             while not done:
                 self.env.render()
-                state = prepro(state)
+                cur_state = prepro(cur_state)
+                state = cur_state if prev_state is None else (cur_state - prev_state)
                 action = self.choose_action(state)
-                state, reward, done, _ = self.env.step(action)
+                prev_state = cur_state
+                cur_state, reward, done, _ = self.env.step(action)
                 self.store_reward(reward)
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
@@ -109,7 +113,7 @@ if __name__ == "__main__":
     os.makedirs(file_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     wandb.init(project='Ping Pong')
-    num_episodes = 1000
+    num_episodes = 50000
     env = gym.make("Pong-v0")
     pg_agent = VPG(env, device, file_dir)
     pg_agent.train(num_episodes)
