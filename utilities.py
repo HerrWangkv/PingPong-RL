@@ -33,8 +33,8 @@ class Policy_Network(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
-        prob = self.fc(x.view(1, -1))
-        return prob
+        probs = self.fc(x.view(1, -1))
+        return probs
 
 class Value_Network(nn.Module):
     def __init__(self):
@@ -75,6 +75,9 @@ class Memory:
     def collect(self):
         return Transition(*zip(*self.memory))
 
+    def size(self):
+        return self.trajectories
+        
     def __getitem__(self, position):
         return self.memory[position]
 
