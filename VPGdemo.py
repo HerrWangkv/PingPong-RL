@@ -47,7 +47,7 @@ class VPG:
                             self.gamma * self.buffer[t+1].value - \
                             self.buffer[t].value
         # normalize the advantage function
-        advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
+        #advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
         expected_return = torch.Tensor([0]).to(self.device)
         value_loss = torch.Tensor([0]).to(self.device)
         for t in range(len(self.buffer)):
@@ -56,6 +56,7 @@ class VPG:
             value_loss += torch.pow((self.buffer[t].value[0] - \
                             rewards_to_go[t]), 2)
         # Optimize Policy Network
+        self.policy.zero_grad()
         expected_return.backward(retain_graph=True)
         for param in self.policy.parameters():
             param.data += self.alpha * param.grad
@@ -74,7 +75,7 @@ class VPG:
             state = self.env.reset()
             reward_sum = 0
             while not done:
-                self.env.render()
+                #self.env.render()
                 state = prepro(state)
                 action, act_prob = self.choose_action(state)
                 next_state, reward, done, _ = self.env.step(action)
