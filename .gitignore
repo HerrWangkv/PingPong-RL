@@ -1,4 +1,4 @@
-TRPO*
+*.md
 test*
 .vscode
 __pycache__
