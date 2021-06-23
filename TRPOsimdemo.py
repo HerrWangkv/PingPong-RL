@@ -5,9 +5,10 @@ import wandb
 import os
 import datetime
 import gym
+import argparse
 
 class TRPO:
-    def __init__(self, env, device, save_dir,alpha=1e-2, gamma=0.9, max_kl=1e-2, mu = 0.5, max_iter=10):
+    def __init__(self, env, device, save_dir,alpha=1e-2, gamma=0.9, max_kl=1e-2, mu = 0.5, max_iter=5):
         self.act_size = env.action_space.n
         self.env = env
         self.device = device
@@ -56,20 +57,20 @@ class TRPO:
 
         def backtracking():
             from copy import deepcopy
-            beta = 1
+            alpha = 1
             for i in range(self.max_iter):
                 new_policy = deepcopy(self.policy)
                 for old_params, new_params in zip(self.policy.parameters(),\
                     new_policy.parameters()):
-                    new_params.data += beta * old_params.grad
+                    new_params.data += alpha * old_params.grad
                 diff, new_kl = get_diff_and_kl(new_policy)
                 if diff > 0 and new_kl < self.max_kl:
                     self.policy = new_policy
-                    print("success", beta)
+                    print(f"success, alpha = {alpha}, diff={diff}, kl_mean={new_kl}")
                     return
                 else:
-                    beta = self.mu * beta
-            print(beta)
+                    alpha = self.mu * alpha
+            print(f"line search failed, alpha = {alpha}")
             self.policy = new_policy     
 
         rewards_to_go = self.discount_rewards().to(self.device)
@@ -129,9 +130,11 @@ class TRPO:
                 torch.save(self.policy.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}/policy.pt'))
                 torch.save(self.value.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}/value.pt'))
 
-    def load_model(self, model_dir):
-        self.policy.load_state_dict(torch.load(model_dir, map_location='cpu'))
-    
+    def load_policy(self, model_dir):
+        self.policy.load_state_dict(torch.load(model_dir, map_location=self.device))
+
+    def load_value(self, model_dir):
+        self.value.load_state_dict(torch.load(model_dir, map_location=self.device)) 
     def show(self, episodes):
         for i in range(episodes):
             state = self.env.reset()
@@ -149,12 +152,37 @@ class TRPO:
             print(f'Episode: {i} | total reward: {reward_sum}')
 
 if __name__ == "__main__":
-    file_dir = os.path.join(os.path.dirname(__file__), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}')
-    os.makedirs(file_dir, exist_ok=True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    wandb.init(project='Pong')
-    num_episodes = 50000
-    env = gym.make("Pong-v0")
-    trpo_agent = TRPO(env, device, file_dir)
-    trpo_agent.train(num_episodes)           
+    parser = argparse.ArgumentParser()
+    sp = parser.add_subparsers(dest="mode")
+    sp.required = True
+    t = sp.add_parser("train")
+    t.add_argument("--policy", '-p', default=None, help='Path to trained policy network')
+    t.add_argument("--value", '-v', default=None, help='Path to trained value network')
+    sp.add_parser("show").add_argument("--policy", '-p',required=True, default=None, help='Path to trained policy network')
+    config = vars(parser.parse_args())
+    print(config)
+    if config['mode'] == 'train':
+        policy = config.get('policy', None)
+        value = config.get('value', None)
+        file_dir = os.path.join(os.path.dirname(__file__), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}')
+        os.makedirs(file_dir, exist_ok=True)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        wandb.init(project='Pong')
+        num_episodes = 50000
+        env = gym.make("Pong-v0")
+        trpo_agent = TRPO(env, device, file_dir)
+        if policy is not None:
+            trpo_agent.load_policy(policy)
+        if value is not None:
+            trpo_agent.load_value(value)
+        trpo_agent.train(num_episodes)  
+    elif config['mode'] == 'show':
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        policy = config.get('policy', None)
+        env = gym.make("Pong-v0")
+        trpo_agent = TRPO(env, device, 'blabla')
+        trpo_agent.load_policy(policy)
+        trpo_agent.show(5)    
+    else:
+        raise ValueError("Your mode is wrong!")
 
