@@ -7,15 +7,17 @@ import datetime
 import gym
 
 class VPG:
-    def __init__(self, env, device, save_dir,alpha=1e-2, gamma=0.9):
+    def __init__(self, env, device, save_dir, batch_size=10,alpha=1e-2, gamma=0.9):
         self.act_size = env.action_space.n
         self.env = env
         self.device = device
         self.save_dir = save_dir
+        self.batch_size = batch_size
         self.alpha = alpha  # learning rate
         self.gamma = gamma  # discount rate
         self.policy = Policy_Network(self.act_size).to(self.device)
         self.value = Value_Network().to(self.device)
+        self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=alpha)
         self.value_optimizer = torch.optim.Adam(self.value.parameters(), lr=alpha)
         self.buffer = Memory()
 
@@ -51,15 +53,17 @@ class VPG:
         expected_return = torch.Tensor([0]).to(self.device)
         value_loss = torch.Tensor([0]).to(self.device)
         for t in range(len(self.buffer)):
-            expected_return += torch.log(self.buffer[t].prob).to(self.device) * \
+            expected_return -= torch.log(self.buffer[t].prob).to(self.device) * \
                 advantages[t].to(self.device)
             value_loss += torch.pow((self.buffer[t].value[0] - \
                             rewards_to_go[t]), 2)
+        expected_return /= self.batch_size
+        value_loss /= len(self.buffer)
+        policy_loss = -expected_return
         # Optimize Policy Network
-        self.policy.zero_grad()
-        expected_return.backward(retain_graph=True)
-        for param in self.policy.parameters():
-            param.data += self.alpha * param.grad
+        self.policy_optimizer.zero_grad()
+        policy_loss.backward(retain_graph=True)
+        self.policy_optimizer.step()
 
         # Optimize Value Network
         self.value_optimizer.zero_grad()
@@ -70,25 +74,27 @@ class VPG:
         return expected_return, value_loss
 
     def train(self, episodes):
-        for i in range(episodes):
+        for i in range(1, episodes+1):
             done = False
             state = self.env.reset()
             reward_sum = 0
             while not done:
                 #self.env.render()
                 state = prepro(state)
-                action, act_prob = self.choose_action(state)
+                action, act_probs = self.choose_action(state)
                 next_state, reward, done, _ = self.env.step(action)
                 value = self.value(state.to(self.device))
-                self.buffer.push(state, value, action, reward, next_state, act_prob)
+                self.buffer.push(state, value, action, reward, next_state, act_probs)
                 state = next_state
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             
-            print(action, act_prob)
-            expected_return, value_loss = self.learn()
-            wandb.log({'reward_sum': reward_sum, 'expected_return': expected_return, 'value_loss': value_loss})
+            print(action, act_probs[action])
+            if (i % self.batch_size == 0):
+                expected_return, value_loss = self.learn()
+                wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
+            wandb.log({'reward_sum': reward_sum})
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % 100 == 0):
                 os.makedirs(os.path.join(self.save_dir, f'checkpoint_{i}'), exist_ok=True)

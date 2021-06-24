@@ -33,7 +33,7 @@ class Policy_Network(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
-        probs = self.fc(x.view(1, -1))
+        probs = self.fc(x.view(x.shape[0], -1))
         return probs
 
 class Value_Network(nn.Module):
@@ -56,7 +56,7 @@ class Value_Network(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
-        value = self.fc(x.view(1, -1))
+        value = self.fc(x.view(x.shape[0], -1))
         return value
 
 Transition = namedtuple('Transition', ['state', 'value', 'action', 'reward', 'next_state', 'prob'])
