@@ -86,18 +86,18 @@ class VPG:
                 action, act_prob = self.choose_action(state)
                 next_state, reward, done, _ = self.env.step(action)
                 value = self.value(state.to(self.device))
-                self.buffer.push(state, value, action, reward, next_state, act_prob)
+                self.buffer.push(state, value, action, reward, act_prob)
                 state = next_state
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             
             print(action, act_prob)
+            print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % self.batch_size == 0):
                 expected_return, value_loss = self.learn()
                 wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
             wandb.log({'reward_sum': reward_sum})
-            print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % 100 == 0):
                 os.makedirs(os.path.join(self.save_dir, f'checkpoint_{i}'), exist_ok=True)
                 torch.save(self.policy.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}/policy.pt'))

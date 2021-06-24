@@ -59,7 +59,7 @@ class Value_Network(nn.Module):
         value = self.fc(x.view(x.shape[0], -1))
         return value
 
-Transition = namedtuple('Transition', ['state', 'value', 'action', 'reward', 'next_state', 'prob'])
+Transition = namedtuple('Transition', ['state', 'value', 'action', 'reward', 'prob'])
 
 class Memory:
     def __init__(self):
