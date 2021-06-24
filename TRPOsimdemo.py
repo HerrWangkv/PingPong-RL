@@ -8,11 +8,12 @@ import gym
 import argparse
 
 class TRPO:
-    def __init__(self, env, device, save_dir,alpha=1e-2, gamma=0.9, max_kl=1e-2, mu = 0.5, max_iter=5):
+    def __init__(self, env, device, save_dir, batch_size=10, alpha=0.1, gamma=0.99, max_kl=1e-2, mu = 0.5, max_iter=10):
         self.act_size = env.action_space.n
         self.env = env
         self.device = device
         self.save_dir = save_dir
+        self.batch_size = batch_size    #batch size before learning
         self.alpha = alpha      # learning rate
         self.gamma = gamma      # discount rate
         self.max_kl = max_kl    # kl divergence limit
@@ -36,8 +37,8 @@ class TRPO:
         running_add = 0
         for t in reversed(range(len(self.buffer))):
             # smaller gamma means no need for resetting running_add
-            #if (self.buffer[t].reward != 0):
-            #    running_add = 0
+            if (self.buffer[t].reward != 0):
+                running_add = 0
             running_add = running_add * self.gamma + self.buffer[t].reward
             discounted_rewards[t] = torch.Tensor([running_add])
         return discounted_rewards
@@ -78,8 +79,10 @@ class TRPO:
         # Optimize Policy Network
         for t in range(len(self.buffer) - 1):
             # Compute advantage estimates
-            # Use discounted reward instead of reward
-            advantages[t] = self.buffer[t].reward + \
+            if (t > 0 and self.buffer[t-1].reward != 0 and self.buffer[t].reward == 0):
+                advantages[t] = 0
+            else:
+                advantages[t] = self.buffer[t].reward + \
                             self.gamma * self.buffer[t+1].value - \
                             self.buffer[t].value
         # normalize the advantage function
@@ -87,10 +90,12 @@ class TRPO:
         expected_return = torch.Tensor([0]).to(self.device)
         value_loss = torch.Tensor([0]).to(self.device)
         for t in range(len(self.buffer)):
-            expected_return += torch.log(self.buffer[t].prob[self.buffer[t].action]).to(self.device) * \
+            expected_return -= torch.log(self.buffer[t].prob[self.buffer[t].action]) * \
                 advantages[t].to(self.device)
             value_loss += torch.pow((self.buffer[t].value[0] - \
                             rewards_to_go[t]), 2)
+        expected_return /= self.batch_size
+        value_loss /= len(self.buffer)
         # Optimize Policy Network
         self.policy.zero_grad()
         expected_return.backward(retain_graph=True)
@@ -105,7 +110,7 @@ class TRPO:
         return expected_return, value_loss
 
     def train(self, episodes):
-        for i in range(episodes):
+        for i in range(1, episodes+1):
             done = False
             state = self.env.reset()
             reward_sum = 0
@@ -122,8 +127,10 @@ class TRPO:
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             
             print(action, act_probs[action])
-            expected_return, value_loss = self.learn()
-            wandb.log({'reward_sum': reward_sum, 'expected_return': expected_return, 'value_loss': value_loss})
+            if (i % self.batch_size == 0):
+                expected_return, value_loss = self.learn()
+                wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
+            wandb.log({'reward_sum': reward_sum})
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % 100 == 0):
                 os.makedirs(os.path.join(self.save_dir, f'checkpoint_{i}'), exist_ok=True)
