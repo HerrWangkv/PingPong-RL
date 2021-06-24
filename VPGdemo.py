@@ -7,7 +7,7 @@ import datetime
 import gym
 
 class VPG:
-    def __init__(self, env, device, save_dir, batch_size=10,alpha=1e-2, gamma=0.9):
+    def __init__(self, env, device, save_dir, batch_size=10,alpha=1e-2, gamma=0.99):
         self.act_size = env.action_space.n
         self.env = env
         self.device = device
@@ -44,8 +44,10 @@ class VPG:
         # Optimize Policy Network
         for t in range(len(self.buffer) - 1):
             # Compute advantage estimates
-            # Use discounted reward instead of reward
-            advantages[t] = self.buffer[t].reward + \
+            if (t > 0 and self.buffer[t-1].reward != 0 and self.buffer[t].reward == 0):
+                advantages[t] = 0
+            else:
+                advantages[t] = self.buffer[t].reward + \
                             self.gamma * self.buffer[t+1].value - \
                             self.buffer[t].value
         # normalize the advantage function
