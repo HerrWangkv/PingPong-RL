@@ -81,16 +81,16 @@ class VPG:
             while not done:
                 #self.env.render()
                 state = prepro(state)
-                action, act_probs = self.choose_action(state)
+                action, act_prob = self.choose_action(state)
                 next_state, reward, done, _ = self.env.step(action)
                 value = self.value(state.to(self.device))
-                self.buffer.push(state, value, action, reward, next_state, act_probs)
+                self.buffer.push(state, value, action, reward, next_state, act_prob)
                 state = next_state
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             
-            print(action, act_probs[action])
+            print(action, act_prob)
             if (i % self.batch_size == 0):
                 expected_return, value_loss = self.learn()
                 wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
