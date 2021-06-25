@@ -109,13 +109,12 @@ class TRPO:
             for i, (name, params) in enumerate(self.policy.named_parameters()):
                 x = compute_x(name, params, grad[i].view(-1, 1), inner_grad[i])
                 ps.append(x)
-                print(ps[-1])
             # line search
             alpha = 1
             for i in range(self.max_iter):
                 new_policy = deepcopy(self.policy)
                 for index, params in enumerate(new_policy.parameters()):
-                    params.data += alpha * ps[index]
+                    params.data -= alpha * ps[index]
                 diff, new_kl = get_diff_and_kl(new_policy)
                 print(diff, new_kl)
                 if diff > 0 and new_kl < self.max_kl:
@@ -145,7 +144,7 @@ class TRPO:
 
         expected_return = -1 * torch.sum(torch.log(old_pis) * advantages)
         value_loss = torch.sum(torch.pow(values - rewards_to_go, 2)) / len(self.buffer)
-        print(expected_return, value_loss)
+        print(f"expected_return = {expected_return}, value_loss = {value_loss}")
         # Optimize Policy Network
         self.policy.zero_grad()
         expected_return.backward(retain_graph=True)
