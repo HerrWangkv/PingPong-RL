@@ -36,7 +36,7 @@ class TRPO:
 
     def discount_rewards(self):
         """[N]"""
-        discounted_rewards = torch.zeros((len(self.buffer), 1))
+        discounted_rewards = torch.zeros(len(self.buffer))
         running_add = 0
         for t in reversed(range(len(self.buffer))):
             # smaller gamma means no need for resetting running_add
@@ -134,13 +134,13 @@ class TRPO:
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
-            
             print(action, act_probs[0, action])
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % self.batch_size == 0):
                 expected_return, value_loss = self.learn()
-                wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
-            wandb.log({'reward_sum': reward_sum})
+                print(value_loss)
+                #wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
+            #wandb.log({'reward_sum': reward_sum})
             if (i % 100 == 0):
                 os.makedirs(os.path.join(self.save_dir, f'checkpoint_{i}'), exist_ok=True)
                 torch.save(self.policy.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}/policy.pt'))
@@ -183,7 +183,7 @@ if __name__ == "__main__":
         file_dir = os.path.join(os.path.dirname(__file__), f'./{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}')
         os.makedirs(file_dir, exist_ok=True)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        wandb.init(project='Pong')
+        #wandb.init(project='Pong')
         num_episodes = 50000
         env = gym.make("Pong-v0")
         trpo_agent = TRPO(env, device, file_dir)
