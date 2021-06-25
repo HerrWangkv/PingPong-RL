@@ -59,7 +59,7 @@ class TRPO:
         values = torch.cat(self.buffer.collect().value)[:,0].to(self.device)
 
         def get_kl_at_theta_k():
-            kl = torch.sum(old_probs * torch.log((old_probs+1e-6) / (old_probs.data+1e-6)))
+            kl = -1 * torch.sum(old_probs * torch.log((old_probs+1e-6) / (old_probs.data+1e-6)))
             return kl
 
         def get_diff_and_kl(new_policy):
@@ -114,10 +114,10 @@ class TRPO:
             for i in range(self.max_iter):
                 new_policy = deepcopy(self.policy)
                 for index, params in enumerate(new_policy.parameters()):
-                    params.data -= alpha * ps[index]
+                    params.data += alpha * ps[index]
                 diff, new_kl = get_diff_and_kl(new_policy)
                 print(diff, new_kl)
-                if diff > 0 and new_kl < self.max_kl:
+                if diff > 0 and torch.abs(new_kl) < self.max_kl:
                     print("success", alpha)
                     self.policy = new_policy
                     new_policy.zero_grad()
