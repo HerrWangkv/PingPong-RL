@@ -39,7 +39,6 @@ class TRPO:
         discounted_rewards = torch.zeros(len(self.buffer))
         running_add = 0
         for t in reversed(range(len(self.buffer))):
-            # smaller gamma means no need for resetting running_add
             if (self.buffer[t].reward != 0):
                 running_add = 0
             running_add = running_add * self.gamma + self.buffer[t].reward
@@ -63,29 +62,32 @@ class TRPO:
         def get_diff_and_kl(new_policy):
             # sum of pi_new(a|s) / pi(a|s) A^\pi(s,a)
             with torch.no_grad():
-                actions = torch.LongTensor(self.buffer.collect().action).view(-1) # one-hot only accepts LongTensor
-                actions = F.one_hot(actions, self.act_size).float().to(self.device)
                 new_probs = new_policy(states)
                 diff = torch.sum(torch.sum(new_probs * actions, dim=1) / old_pis * advantages)
-                kl = torch.sum(new_probs * torch.log(new_probs / old_probs))
+                kl = torch.sum(new_probs * torch.log((new_probs+1e-7) / (old_probs+1e-7)))
                 return diff, kl / len(self.buffer)
 
         def backtracking():
             from copy import deepcopy
-            alpha = 1
+            alpha = 10
             for i in range(self.max_iter):
                 new_policy = deepcopy(self.policy)
                 for old_params, new_params in zip(self.policy.parameters(),\
                     new_policy.parameters()):
                     new_params.data += alpha * old_params.grad
                 diff, new_kl = get_diff_and_kl(new_policy)
-                if diff > 0 and new_kl < self.max_kl:
+                print(f"diff = {diff}, new_kl = {new_kl}")
+                if diff > 0 and torch.abs(new_kl) < self.max_kl:
                     self.policy = new_policy
                     print(f"success, alpha = {alpha}, diff={diff}, kl_mean={new_kl}")
                     return
                 else:
                     alpha = self.mu * alpha
             print(f"line search failed, alpha = {alpha}")
+            #print(f"line search failed, choosing random search direction")
+            #for old_params, new_params in zip(self.policy.parameters(),\
+            #    new_policy.parameters()):
+            #    new_params.data += 0.1 * torch.randn_like(new_params.data)
             self.policy = new_policy
 
         rewards_to_go = self.discount_rewards().to(self.device)
@@ -100,9 +102,11 @@ class TRPO:
                             self.gamma * self.buffer[t+1].value - \
                             self.buffer[t].value
         # normalize the advantage function
-        #advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
-        expected_return = -1 * torch.sum(torch.log(old_pis) * advantages) / self.batch_size
+        advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
+        # add penalty
+        expected_return = torch.sum(torch.log(old_pis) * advantages - 0.1 * torch.pow(old_pis, 2))/ self.batch_size
         value_loss = torch.sum(torch.pow(values - rewards_to_go, 2)) / len(self.buffer)
+        print(f"expected_return = {expected_return}, value_loss = {value_loss}")
         # Optimize Policy Network
         self.policy.zero_grad()
         expected_return.backward(retain_graph=True)
@@ -134,7 +138,7 @@ class TRPO:
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
-            print(action, act_probs[0, action])
+            print("action: ", action, act_probs[0, action])
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % self.batch_size == 0):
                 expected_return, value_loss = self.learn()
