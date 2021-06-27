@@ -9,7 +9,7 @@ import argparse
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 class TRPO:
-    def __init__(self, env, device, save_dir, batch_size=1, alpha=0.1, gamma=0.9, max_kl=1e-3, mu = 0.5, max_iter=15):
+    def __init__(self, env, device, save_dir, batch_size=1, alpha=1e-3, gamma=0.9, max_kl=1e-3, mu = 0.5, max_iter=15):
         self.act_size = 2# only accept action 2 and 3 for simplification
         self.env = env
         self.device = device
@@ -25,6 +25,7 @@ class TRPO:
         self.value = Value_Network().to(self.device)
         self.value_optimizer = torch.optim.Adam(self.value.parameters(), lr=alpha)
         self.buffer = Memory()
+        self.idol = Memory()
 
     # Need to output all act_probs for KL divergence
     def choose_action(self, state):
@@ -35,16 +36,16 @@ class TRPO:
         index = np.random.choice(len(possible_actions), 1, p=act_probs.cpu().data.numpy().reshape(-1))[0]
         return possible_actions[index], act_probs
 
-    def discount_rewards(self):
+    def discount_rewards(self, memory):
         """[N]"""
-        discounted_rewards = torch.zeros(len(self.buffer))
+        discounted_rewards = torch.zeros(len(memory))
         discounted_rewards.requires_grad_(True)
         running_add = 0
-        for t in reversed(range(len(self.buffer))):
-            if (self.buffer[t].reward != 0):
+        for t in reversed(range(len(memory))):
+            if (memory[t].reward != 0):
                 running_add = 0
-            running_add = running_add * self.gamma + self.buffer[t].reward
-            discounted_rewards[t] = running_add
+            running_add = running_add * self.gamma + memory[t].reward
+            discounted_rewards[t].data = torch.FloatTensor([running_add])
         return discounted_rewards
 
     def learn(self):
@@ -56,13 +57,15 @@ class TRPO:
         old_probs.requires_grad_(True)
         actions = torch.LongTensor(self.buffer.collect().action).view(-1) # one-hot only accepts LongTensor
         # [N,2]
-        actions = F.one_hot(actions, self.act_size).float().to(self.device)
+        actions = F.one_hot(actions-2, self.act_size).float().to(self.device)
         # [N]
         old_pis = torch.sum(old_probs * actions, dim=1).to(self.device) # probabilities of the sampled actions
         assert old_pis.requires_grad == True
         # [N]
         values = torch.cat(self.buffer.collect().value)[:,0].to(self.device)
         values.requires_grad_(True)
+        idol_values = torch.cat(self.idol.collect().value)[:,0].to(self.device)
+        idol_values.requires_grad_(True)
 
         def get_diff_and_kl(new_policy):
             # sum of pi_new(a|s) / pi(a|s) A^\pi(s,a)
@@ -98,36 +101,29 @@ class TRPO:
                 print(f"line search failed, alpha = {alpha}")
             self.policy = new_policy
 
-        rewards_to_go = self.discount_rewards().to(self.device)
+        rewards_to_go = self.discount_rewards(self.buffer).to(self.device)
+        idol_rewards_to_go = self.discount_rewards(self.idol).to(self.device)
         advantages = torch.zeros(len(self.buffer)).to(self.device)
-        advantages.requires_grad_(True)
         for t in range(len(self.buffer) - 1):
             # Compute advantage estimates
             if (t > 0 and self.buffer[t-1].reward != 0 and self.buffer[t].reward == 0):
-                advantages[t] = 0
+                pass
             else:
-                advantages[t] = self.buffer[t].reward + \
+                advantages[t]= self.buffer[t].reward + \
                             self.gamma * self.buffer[t+1].value - \
                             self.buffer[t].value
         # normalize the advantage function
         advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
         expected_return = torch.sum(torch.log(1 + old_pis) * advantages.data)/ self.buffer.size()
-        value_loss = torch.sum(torch.pow(values - rewards_to_go, 2)) / len(self.buffer)
-        print(f"value_loss = {value_loss}")
-        old_loss = value_loss
+        value_loss = (torch.sum(torch.pow(values - rewards_to_go, 2)) + \
+                        torch.sum(torch.pow(idol_values - idol_rewards_to_go, 2))) / (len(self.buffer) + len(self.idol))
         # Optimize Value Network
-        for iter in range(100):
-            self.value.zero_grad()
-            value_loss.backward(retain_graph=True)
-            self.value_optimizer.step()
-            values = self.value(states)[0]
-            value_loss = torch.sum(torch.pow(values - rewards_to_go, 2)) / len(self.buffer)
-            print(f"value_loss = {value_loss}")
-            if (torch.abs(old_loss - value_loss) < 1e-5):
-                break
-            old_loss = value_loss
-        print(f"expected_return = {expected_return}")
+        print(f"value_loss = {value_loss}")
+        self.value.zero_grad()
+        value_loss.backward(retain_graph=True)
+        self.value_optimizer.step()
         # Optimize Policy Network
+        print(f"expected_return = {expected_return}")
         self.policy.zero_grad()
         expected_return.backward()
         backtracking()
@@ -151,6 +147,9 @@ class TRPO:
                 self.buffer.push(state, value, action, reward, act_probs)
                 state = next_state
                 reward_sum += reward
+                if (reward == 1 and self.idol.size() < 10):
+                    for j in range(self.buffer.last_boundary, len(self.buffer)):
+                        self.idol.push_transition(self.buffer[j])
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             print("action_probs: ", act_probs[0])

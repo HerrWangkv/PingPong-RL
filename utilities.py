@@ -63,13 +63,22 @@ class Memory:
     def __init__(self):
         self.memory = []
         self.trajectories = 0
+        self.last_boundary = 0
 
     def push(self, *args):
         self.memory.append(Transition(*args))
         # reward
         if (args[3] != 0):
             self.trajectories += 1
+        if (args[3] == 0 and self.memory[len(self.memory)-2].reward != 0):
+            self.last_boundary = len(self.memory) - 1
     
+    def push_transition(self, t):
+        self.memory.append(t)
+        if (t.reward != 0):
+            self.trajectories += 1
+            self.last_boundary = len(self.memory)
+
     def collect(self):
         return Transition(*zip(*self.memory))
 
