@@ -10,7 +10,9 @@ def prepro(I):
     I[I == 109] = 0 # erase background (background type 2)
     I[I != 0] = 1 # everything else (paddles, ball) just set to 1
     I = I.reshape(1, 1, 80, 80)
-    return torch.FloatTensor(I)
+    ret = torch.FloatTensor(I)
+    ret.requires_grad_(True)
+    return ret
 
 class Policy_Network(nn.Module):
     def __init__(self, act_size):
