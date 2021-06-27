@@ -16,18 +16,16 @@ class Policy_Network(nn.Module):
     def __init__(self, act_size):
         super(Policy_Network, self).__init__()
         self.conv = nn.Sequential(
-            # 1*80*80->3*26*26
-            nn.Conv2d(in_channels=1, out_channels=3, kernel_size=5, stride=3),
+            # 1*80*80->1*26*26
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=5, stride=3),
             nn.ReLU(),
-            # 3*26*26->3*13*13
+            # 1*26*26->1*13*13
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
         self.fc = nn.Sequential(
-            nn.Linear(3*13*13, 64),
+            nn.Linear(13*13, 64),
             nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, act_size),
+            nn.Linear(64, act_size),
             nn.Softmax(dim=1)
         )
 
@@ -40,18 +38,16 @@ class Value_Network(nn.Module):
     def __init__(self):
         super(Value_Network, self).__init__()
         self.conv = nn.Sequential(
-            # 1*80*80->3*26*26
-            nn.Conv2d(in_channels=1, out_channels=3, kernel_size=5, stride=3),
+            # 1*80*80->1*26*26
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=5, stride=3),
             nn.ReLU(),
-            # 3*26*26->3*13*13
+            # 1*26*26->1*13*13
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
         self.fc = nn.Sequential(
-            nn.Linear(3*13*13, 64),
+            nn.Linear(13*13, 64),
             nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1)
+            nn.Linear(64, 1)
         )
 
     def forward(self, x):

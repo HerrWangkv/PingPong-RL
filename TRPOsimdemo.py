@@ -7,9 +7,9 @@ import datetime
 import gym
 import argparse
 import torch.nn.functional as F
-
+import matplotlib.pyplot as plt
 class TRPO:
-    def __init__(self, env, device, save_dir, batch_size=10, alpha=0.1, gamma=0.99, max_kl=1e-2, mu = 0.5, max_iter=10):
+    def __init__(self, env, device, save_dir, batch_size=1, alpha=0.1, gamma=0.99, max_kl=0.01, mu = 0.5, max_iter=10):
         self.act_size = env.action_space.n
         self.env = env
         self.device = device
@@ -29,7 +29,7 @@ class TRPO:
     # Need to output all act_probs for KL divergence
     def choose_action(self, state):
         """int, [1, self.act_size]"""
-        act_probs = self.policy(state.to(self.device))
+        act_probs = self.policy(state)
         # can't convert CUDA tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
         action = np.random.choice(self.act_size, 1, p=act_probs.cpu().data.numpy().reshape(-1))[0]
         return action, act_probs
@@ -83,11 +83,13 @@ class TRPO:
                     return
                 else:
                     alpha = self.mu * alpha
-            print(f"line search failed, alpha = {alpha}")
-            #print(f"line search failed, choosing random search direction")
-            #for old_params, new_params in zip(self.policy.parameters(),\
-            #    new_policy.parameters()):
-            #    new_params.data += 0.1 * torch.randn_like(new_params.data)
+            if new_kl == 0:
+                print("line search failed, add random noise")
+                for old_params, new_params in zip(self.policy.parameters(),\
+                    new_policy.parameters()):
+                    new_params.data += 0.1 * torch.randn_like(new_params.data)
+            else:
+                print(f"line search failed, alpha = {alpha}")
             self.policy = new_policy
 
         rewards_to_go = self.discount_rewards().to(self.device)
@@ -103,8 +105,7 @@ class TRPO:
                             self.buffer[t].value
         # normalize the advantage function
         advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
-        # add penalty
-        expected_return = torch.sum(torch.log(old_pis) * advantages - 0.1 * torch.pow(old_pis, 2))/ self.batch_size
+        expected_return = torch.sum(old_pis * advantages)/ self.batch_size
         value_loss = torch.sum(torch.pow(values - rewards_to_go, 2)) / len(self.buffer)
         print(f"expected_return = {expected_return}, value_loss = {value_loss}")
         # Optimize Policy Network
@@ -132,8 +133,9 @@ class TRPO:
                 next_state, reward, done, _ = self.env.step(action)
                 value = self.value(state)
                 next_state = prepro(next_state).to(self.device)
+                # emphasize the positive reward
                 #           [1,1,80,80],[1,1],  int,   float, [1, self.act_size] 
-                self.buffer.push(state, value, action, reward, act_probs)
+                self.buffer.push(state, value, action, 10 * reward if reward > 0 else reward, act_probs)
                 state = next_state
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
@@ -154,20 +156,27 @@ class TRPO:
 
     def load_value(self, model_dir):
         self.value.load_state_dict(torch.load(model_dir, map_location=self.device)) 
+
     def show(self, episodes):
         for i in range(episodes):
             state = self.env.reset()
+            state = prepro(state).to(self.device)
             reward_sum = 0
             done = False
+            old_value = self.value(state)
             while not done:
                 self.env.render()
-                state = prepro(state)
                 action, act_probs = self.choose_action(state)
                 state, reward, done, _ = self.env.step(action)
+                state = prepro(state).to(self.device)
+                new_value = self.value(state)
+                advantage = reward + self.gamma*new_value - old_value
                 reward_sum += reward
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print (f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
                     print(act_probs)
+                    print(advantage)
+                    
             print(f'Episode: {i} | total reward: {reward_sum}')
 
 if __name__ == "__main__":
@@ -177,7 +186,9 @@ if __name__ == "__main__":
     t = sp.add_parser("train")
     t.add_argument("--policy", '-p', default=None, help='Path to trained policy network')
     t.add_argument("--value", '-v', default=None, help='Path to trained value network')
-    sp.add_parser("show").add_argument("--policy", '-p',required=True, default=None, help='Path to trained policy network')
+    s = sp.add_parser("show")
+    s.add_argument("--policy", '-p',required=True, default=None, help='Path to trained policy network')
+    s.add_argument("--value", '-v', default=None, help='Path to trained value network')
     config = vars(parser.parse_args())
     print(config)
     if config['mode'] == 'train':
@@ -198,10 +209,29 @@ if __name__ == "__main__":
     elif config['mode'] == 'show':
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         policy = config.get('policy', None)
+        value = config.get('value', None)
         env = gym.make("Pong-v0")
         trpo_agent = TRPO(env, device, 'blabla')
         trpo_agent.load_policy(policy)
-        trpo_agent.show(5)    
+        if value is not None:
+            trpo_agent.load_value(value) 
+        trpo_agent.show(5) 
+        ''' DEBUG
+        state = trpo_agent.env.reset()
+        done = False
+        for i in range(100):
+            action= trpo_agent.env.action_space.sample()
+            state, reward, done, _ = trpo_agent.env.step(action)
+            trpo_agent.env.render()  
+        state = prepro(state).to(trpo_agent.device)      
+        temp = trpo_agent.value.conv(state).cpu().data.numpy()[0]
+        plt.imshow(temp[0]) 
+        plt.show()
+        plt.imshow(temp[1]) 
+        plt.show()
+        plt.imshow(temp[2])
+        plt.show()
+        '''
     else:
         raise ValueError("Your mode is wrong!")
 
