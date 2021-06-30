@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from collections import namedtuple
-
+from copy import deepcopy
 def prepro(I):
     """ prepro 210x160x3 uint8 frame into 80x80 2D float vector """
     I = I[35:195] # crop
@@ -57,33 +57,34 @@ class Value_Network(nn.Module):
         value = self.fc(x.view(x.shape[0], -1))
         return value
 
-Transition = namedtuple('Transition', ['state', 'value', 'action', 'reward', 'prob'])
+Transition = namedtuple('Transition', ['state', 'action', 'reward', 'prob'])
 
 class Memory:
     def __init__(self):
         self.memory = []
-        self.trajectories = 0
+        self._trajectories = 0
         self.last_boundary = 0
 
     def push(self, *args):
         self.memory.append(Transition(*args))
         # reward
-        if (args[3] != 0):
-            self.trajectories += 1
-        if (args[3] == 0 and self.memory[len(self.memory)-2].reward != 0):
+        if (args[2] != 0):
+            self._trajectories += 1
+        if (len(self.memory) > 2 and args[2] == 0 and self.memory[-2].reward != 0):
             self.last_boundary = len(self.memory) - 1
     
-    def push_transition(self, t):
-        self.memory.append(t)
-        if (t.reward != 0):
-            self.trajectories += 1
-            self.last_boundary = len(self.memory)
+    def pop_game(self):
+        end = 0
+        while(self.memory[end].reward == 0):
+            end += 1
+        del self.memory[0: end + 1]
+        self._trajectories -= 1
 
     def collect(self):
         return Transition(*zip(*self.memory))
 
     def size(self):
-        return self.trajectories
+        return self._trajectories
         
     def __getitem__(self, position):
         return self.memory[position]

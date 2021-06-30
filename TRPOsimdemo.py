@@ -9,7 +9,7 @@ import argparse
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 class TRPO:
-    def __init__(self, env, device, save_dir, batch_size=1, alpha=1e-3, gamma=0.9, max_kl=1e-3, mu = 0.5, max_iter=15):
+    def __init__(self, env, device, save_dir, batch_size=1, alpha=1e-3, gamma=0.99, max_kl=1e-3, mu = 0.5, max_iter=15):
         self.act_size = 2# only accept action 2 and 3 for simplification
         self.env = env
         self.device = device
@@ -25,7 +25,7 @@ class TRPO:
         self.value = Value_Network().to(self.device)
         self.value_optimizer = torch.optim.Adam(self.value.parameters(), lr=alpha)
         self.buffer = Memory()
-        self.idol = Memory()
+        #self.idol = Memory()
 
     # Need to output all act_probs for KL divergence
     def choose_action(self, state):
@@ -36,17 +36,17 @@ class TRPO:
         index = np.random.choice(len(possible_actions), 1, p=act_probs.cpu().data.numpy().reshape(-1))[0]
         return possible_actions[index], act_probs
 
-    def discount_rewards(self, memory):
+    def discount_rewards(self, rewards):
         """[N]"""
-        discounted_rewards = torch.zeros(len(memory))
-        discounted_rewards.requires_grad_(True)
-        running_add = 0
-        for t in reversed(range(len(memory))):
-            if (memory[t].reward != 0):
-                running_add = 0
-            running_add = running_add * self.gamma + memory[t].reward
-            discounted_rewards[t].data = torch.FloatTensor([running_add])
-        return discounted_rewards
+        with torch.no_grad():
+            discounted_rewards = torch.zeros(rewards.shape[0])
+            running_add = 0
+            for t in reversed(range(rewards.shape[0])):
+                if (rewards[t] != 0):
+                    running_add = 0
+                running_add = running_add * self.gamma + rewards[t]
+                discounted_rewards[t].data = running_add
+            return discounted_rewards
 
     def learn(self):
         # [N,1,80,80]
@@ -62,10 +62,14 @@ class TRPO:
         old_pis = torch.sum(old_probs * actions, dim=1).to(self.device) # probabilities of the sampled actions
         assert old_pis.requires_grad == True
         # [N]
-        values = torch.cat(self.buffer.collect().value)[:,0].to(self.device)
-        values.requires_grad_(True)
-        idol_values = torch.cat(self.idol.collect().value)[:,0].to(self.device)
-        idol_values.requires_grad_(True)
+        rewards = torch.FloatTensor(self.buffer.collect().reward).view(-1)
+        # [N]
+        values = self.value(states)[:,0]
+        '''
+        if (len(self.idol) != 0):
+            with torch.no_grad():
+                idol_values = torch.cat(self.idol.collect().value)[:,0].to(self.device)
+        '''
 
         def get_diff_and_kl(new_policy):
             # sum of pi_new(a|s) / pi(a|s) A^\pi(s,a)
@@ -98,25 +102,31 @@ class TRPO:
                     if i == reset_index:
                         new_params.data = torch.randn_like(new_params.data)
             else:
-                print(f"line search failed, alpha = {alpha}")
+                print(f"line search failed, alpha = {alpha}, diff={diff}, kl_mean={new_kl}")
             self.policy = new_policy
 
-        rewards_to_go = self.discount_rewards(self.buffer).to(self.device)
-        idol_rewards_to_go = self.discount_rewards(self.idol).to(self.device)
+        rewards_to_go = self.discount_rewards(rewards).to(self.device)
+        #if (len(self.idol) != 0):
+        #    idol_rewards_to_go = self.discount_rewards(self.idol).to(self.device)
         advantages = torch.zeros(len(self.buffer)).to(self.device)
         for t in range(len(self.buffer) - 1):
             # Compute advantage estimates
-            if (t > 0 and self.buffer[t-1].reward != 0 and self.buffer[t].reward == 0):
-                pass
+            if (self.buffer[t].reward != 0):
+                advantages[t]= rewards[t] - values[t]
             else:
-                advantages[t]= self.buffer[t].reward + \
-                            self.gamma * self.buffer[t+1].value - \
-                            self.buffer[t].value
+                advantages[t]= rewards[t] + self.gamma * values[t+1] - values[t]
         # normalize the advantage function
         advantages = (advantages - torch.mean(advantages)) / torch.std(advantages)
-        expected_return = torch.sum(torch.log(1 + old_pis) * advantages.data)/ self.buffer.size()
-        value_loss = (torch.sum(torch.pow(values - rewards_to_go, 2)) + \
-                        torch.sum(torch.pow(idol_values - idol_rewards_to_go, 2))) / (len(self.buffer) + len(self.idol))
+        expected_return = torch.sum(torch.log(old_pis) * advantages.data)/ self.buffer.size()
+        '''
+        if (len(self.idol) != 0):
+            value_loss = (torch.sum(torch.pow(values - rewards_to_go, 2)) + \
+                        torch.sum(torch.pow(idol_values - idol_rewards_to_go, 2))) / (len(self.idol) + len(self.buffer))
+            print(f"buffer: {self.buffer.size()}, idol: {self.idol.size()}")
+        else:
+            value_loss = (torch.sum(torch.pow(values - rewards_to_go, 2))) / len(self.buffer)
+        '''
+        value_loss = (torch.sum(torch.pow(values - rewards_to_go.data, 2))) / len(self.buffer)
         # Optimize Value Network
         print(f"value_loss = {value_loss}")
         self.value.zero_grad()
@@ -125,39 +135,45 @@ class TRPO:
         # Optimize Policy Network
         print(f"expected_return = {expected_return}")
         self.policy.zero_grad()
-        expected_return.backward()
+        expected_return.backward(retain_graph=True)
         backtracking()
 
-        self.buffer = Memory()
         return expected_return, value_loss
 
     def train(self, episodes):
+        reward_sum = 0
         for i in range(1, episodes+1):
             done = False
             state = self.env.reset()
             state = prepro(state).to(self.device)
-            reward_sum = 0
             while not done:
                 #self.env.render()
                 action, act_probs = self.choose_action(state)
                 next_state, reward, done, _ = self.env.step(action)
-                value = self.value(state)
                 next_state = prepro(next_state).to(self.device)
-                #           [1,1,80,80],[1,1],  int,   float, [1, self.act_size] 
-                self.buffer.push(state, value, action, reward, act_probs)
+                if (self.buffer.size() == 200):
+                    self.buffer.pop_game()
+                #           [1,1,80,80],  int,   float, [1, self.act_size] 
+                self.buffer.push(state, action, reward, act_probs)
                 state = next_state
                 reward_sum += reward
-                if (reward == 1 and self.idol.size() < 10):
+                '''
+                if (reward == 1):
+                    if (self.idol.size() == self.batch_size * 4):
+                        self.idol.pop_game()
                     for j in range(self.buffer.last_boundary, len(self.buffer)):
-                        self.idol.push_transition(self.buffer[j])
+                        t = self.buffer[j]
+                        self.idol.push(t.state, t.value, t.action, t.reward, t.prob)
+                '''
                 if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
                     print(f'ep {i}: game finished, reward: {"-1" if reward == -1 else "1 !!!!!!!!"}')
             print("action_probs: ", act_probs[0])
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % self.batch_size == 0):
+                print(f"buffer size:{self.buffer.size()}")
                 expected_return, value_loss = self.learn()
-                wandb.log({'expected_return': expected_return, 'value_loss': value_loss})
-            wandb.log({'reward_sum': reward_sum})
+                wandb.log({'expected_return': expected_return, 'value_loss': value_loss, 'reward_average': reward_sum / self.batch_size})
+                reward_sum = 0
             if (i % 100 == 0):
                 os.makedirs(os.path.join(self.save_dir, f'checkpoint_{i}'), exist_ok=True)
                 torch.save(self.policy.state_dict(), os.path.join(self.save_dir, f'checkpoint_{i}/policy.pt'))
@@ -204,6 +220,7 @@ if __name__ == "__main__":
     config = vars(parser.parse_args())
     print(config)
     env = gym.make("Pong-v0")
+    env.seed(42)
     if config['mode'] == 'train':
         policy = config.get('policy', None)
         value = config.get('value', None)
