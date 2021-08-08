@@ -89,8 +89,12 @@ def prepro_for_MountainCar(state):
     return ret
 
 def reward_for_MountainCar(state, reward):
+    if state[0] >= 0.5:
+        return 100
     if state[0] >= 0.4:
-        return 10 * (state[0] - 0.3)
+        return 10
+    if state[0] >= 0.2:
+        return 5
     if state[0] >= -0.4:
             return 2
     elif -0.6 < state[0] < -0.4:
@@ -112,14 +116,14 @@ def prepro_for_Pong(I):
 
 def reward_for_Pong(state, reward):
     """ 
-    +2 if ball is in a small neighbor of our racket, 
-    +10 if hit the ball
-    +50 if win, -50 if lose, 0 for every step
+    +1 if ball is in a small neighbor of our racket, 
+    +5 if hit the ball
+    +10 if win, -10 if lose, 0 for every step
     """
     if reward < 0:
-        return -50
+        return -100
     elif reward > 0:
-        return 50
+        return 100
     else:
         s = state[35:195:2, ::2, 0].copy()
         s[s==144] = 0
@@ -127,8 +131,8 @@ def reward_for_Pong(state, reward):
         up = np.min(np.where(s[:, 70] != 0))
         down = np.max(np.where(s[:, 70] != 0))
         if np.any(s[up: down+1, 69] != 0):
-            return 10
+            return 5
         elif np.any(s[up: down+1, 65:70] != 0):
-            return 2
+            return 1
         else:
             return 0

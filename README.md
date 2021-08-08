@@ -7,14 +7,15 @@ For installing all necessary Python packages it is very useful to first set up a
 Afterwards, all packages can be installed using `pip install -r requirements.txt`.
 
 ## Results
-### simplified TRPO on [MountainCar](https://gym.openai.com/envs/MountainCar-v0/)
-![MountainCar](./Images/MountainCar.gif)
-
+### Simplified TRPO
 "simplified" means only using first-order derivative for gradient descent
 
-Goal: Drive up the mountain in 150 frames on average
+Process: First evaluate V-Value Network with random actions for 10 Episodes every 100 Episodes and then basiclly follow [this tutorial](https://spinningup.openai.com/en/latest/algorithms/trpo.html) 
 
-Process: First 100 Episode for V-Value Network Evaluation and then basiclly follow [this tutorial](https://spinningup.openai.com/en/latest/algorithms/trpo.html) 
+#### [MountainCar](https://gym.openai.com/envs/MountainCar-v0/)
+![MountainCar](./Images/MountainCar.gif)
+
+Goal: Drive up the mountain in 150 frames on average
 
 Usage:
 1. train:

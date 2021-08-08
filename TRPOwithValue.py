@@ -52,7 +52,7 @@ class TRPO:
             discounted_rewards = torch.zeros(rewards.shape[0])
             running_add = 0
             for t in reversed(range(rewards.shape[0])):
-                if self.env.spec.id.startswith('Pong') and (rewards[t] == 50 or rewards[t] == -50):
+                if self.env.spec.id.startswith('Pong') and (rewards[t] == 100 or rewards[t] == -100):
                     running_add = 0
                 running_add = running_add * self.gamma + rewards[t]
                 discounted_rewards[t] = running_add
@@ -73,10 +73,10 @@ class TRPO:
             va = Value_Network(self.obs_size).to(self.device)
             set_flat_params_to(va, flat_params)
             values_ = va(self.states)[:,0]
-            value_loss = (torch.sum(torch.pow(values_ - rewards_to_go.data, 2))) / len(self.buffer)
+            value_loss = torch.mean(torch.pow(values_ - rewards_to_go.data, 2))
             # weight decay
             for params in va.parameters():
-                value_loss += torch.sum(torch.pow(params, 2)) * 0.1
+                value_loss += torch.mean(torch.pow(params, 2)) * 0.1
             va.zero_grad()
             value_loss.backward()
             return (value_loss.data.cpu().double().numpy(), get_flat_grad_from(va).data.cpu().double().numpy())
@@ -109,7 +109,7 @@ class TRPO:
         def get_diff_and_kl(new_policy):
             with torch.no_grad():
                 new_probs = new_policy(self.states)
-                diff = torch.sum(((torch.sum(new_probs * actions, dim=1) / old_pis.data)-1) * advantages)/ self.batch_size
+                diff = torch.mean(((torch.sum(new_probs * actions, dim=1) / old_pis.data)-1) * advantages)
                 kl = torch.sum(new_probs * torch.log((new_probs+1e-7) / (old_probs+1e-7)))
                 return diff, kl / len(self.buffer)
         
@@ -143,8 +143,10 @@ class TRPO:
                 print(f"line search failed, policy remains unchanged.")
     
         rewards_to_go = self.discount_rewards(self.rewards).to(self.device)
-        advantages = rewards_to_go.data - self.values.data 
-        expected_return = torch.sum((old_pis / old_pis.data) * advantages.data)/ self.batch_size
+        advantages = rewards_to_go.data - self.values.data
+        # normalize 
+        #advantages = 100 * (advantages - torch.mean(advantages)) / torch.std(advantages)
+        expected_return = torch.mean((old_pis / old_pis.data) * advantages.data)
         # weight decay
         for params in self.policy.parameters():
             expected_return -= torch.mean(torch.pow(params, 2)) * 0.1
@@ -155,9 +157,9 @@ class TRPO:
         expected_return.backward()
         backtracking()
         
-        value_loss =  self.evaluate()
-        return expected_return, value_loss
-
+        #value_loss =  self.evaluate()
+        self.buffer = Memory()
+        return expected_return
     def train(self, episodes):
         running_average = None
         reward_sum = 0
@@ -167,7 +169,7 @@ class TRPO:
             pro_state = self.prepro(state).to(self.device)
             while not done:
                 #self.env.render()
-                if (i <= 100):
+                if (i % 100 <= 10):
                     action = self.env.action_space.sample()
                     act_probs = None
                 else:
@@ -178,24 +180,24 @@ class TRPO:
                 self.buffer.push(pro_state, action, r, act_probs)
                 state = next_state
                 pro_state = self.prepro(state).to(self.device)
-            if (i > 100): 
+            if (i % 100 > 10): 
                 print("action_probs: ", act_probs[0])
             print(f'Episode: {i} | total reward: {reward_sum}')
             if (i % self.batch_size == 0):
                 reward_avg = reward_sum / self.batch_size
-                running_average = reward_avg if running_average is None else 0.99 * running_average + 0.01 * reward_avg
                 print(f"buffer size:{len(self.buffer)}")
-                if (i <= 100):
+                if (i % 100 <= 10):
                     value_loss = self.evaluate()
-                    wandb.log({'value_loss': value_loss, 'reward_average': reward_avg, 'running average': running_average})
+                    wandb.log({'value_loss': value_loss, 'reward_average': reward_avg})
                 else:
-                    expected_return, value_loss = self.learn()
-                    wandb.log({'expected_return': expected_return, 'value_loss': value_loss, 'reward_average': reward_avg, 'running average': running_average})
-                if running_average > self.threshold:
-                    self.save('BEST')
-                    print('*********FINISHED*********')
-                    print(f'running average: {running_average}')
-                    return
+                    running_average = reward_avg if running_average is None else 0.99 * running_average + 0.01 * reward_avg
+                    expected_return = self.learn()
+                    wandb.log({'expected_return': expected_return, 'reward_average': reward_avg, 'running average': running_average})
+                    if running_average > self.threshold:
+                        self.save('BEST')
+                        print('*********FINISHED*********')
+                        print(f'running average: {running_average}')
+                        return
                 reward_sum = 0
             if (i % 100 == 0):
                 self.save(i)
